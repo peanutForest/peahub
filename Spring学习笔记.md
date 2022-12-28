@@ -917,6 +917,8 @@ public class ReplacementComputeValue implements MethodReplacer {
 
 因此需要`<aop:scoped-proxy/>`来对短生命周期的bean进行代理。容器实际上为`userService`注入了一个代理对象，当调用`userPreferences`方法时，实际调用的是代理对象的方法，代理对象会从HTTP Session中获取实际的`userPreferences`对象。
 
+> 注意：当在`FactoryBean`的bean定义内使用`<aop:scoped-proxy/>`，则被代理的并不是`FactoryBean.getObject()`方法返回的对象，而是`FactoryBean`本身
+
 **代理方式**
 
 Spring为标记了`<aop:scoped-proxy/>`的bean创建代理对象时，使用CGLIB，也即创建子类并重写方法的方式。CGLIB方式只能拦截代理`public`方法。
@@ -998,6 +1000,97 @@ beanFactory.registerScope("thread", threadScope);
     </bean>
 </beans>
 ```
+
+## 1.6 自定义Bean的特性
+
+### 1.6.1 生命周期回调（Lifecycle Callbacks）
+
+`BeanPostProcessor`：`ApplicationContext`会自动检测实现该接口的bean，并应用于容器中所有创建的bean
+
+ `InitializingBean` ：bean所有依赖都注入完成之后调用，可用于bean自定义初始化，或者校验所有强制依赖是否都注入成功
+
+####  初始化阶段回调（Initialization Callbacks）
+
+ `org.springframework.beans.factory.InitializingBean` 
+
+```java
+void afterPropertiesSet() throws Exception;
+```
+
+使用该接口的话就需要与Spring API耦合，所以更推荐使用：
+
+- `@PostConstruct`注解
+- 或者在xml配置文件中使用`init-method`属性来指定bean中自定义的方法来作为回调方法（必须无参且无返回值）
+- 或者使用`@Bean`注解中的`initMethod`属性（在`initMethod`中指定`@Bean`注解标注的方法返回的bean中的初始化回调方法）
+
+#### 销毁阶段回调（Destruction Callbacks）
+
+ `org.springframework.beans.factory.DisposableBean` 
+
+```java
+void destroy() throws Exception;
+```
+
+当容器要销毁时，会调用` org.springframework.beans.factory.DisposableBean `的预销毁方法。可替代的同样有：
+
+-  [`@PreDestroy`](https://docs.spring.io/spring-framework/docs/current/reference/html/core.html#beans-postconstruct-and-predestroy-annotations) 注解
+-  `<bean/>`标签中的 `destroy-method` 属性
+- `@Bean`注解中的`destroyMethod`属性
+
+#### 默认的初始化和销毁回调
+
+也可以在父标签`<beans/>`中使用`default-init-method/default-destroy-method`属性，指定一批bean的默认初始化/销毁回调方法。
+
+不过，在子标签`<bean/>`中指定`init-method/destroy-method`可以覆盖父标签中的配置
+
+Spring是在设置完依赖之后立刻调用初始化回调，此时bean拥有的是刚刚初始化好的依赖，此时AOP代理还没有应用到该目标bean
+
+#### 结合多种回调配置方式
+
+从上面两小节可以知道，有三种配置初始化/销毁回调的方式：
+
+-  `InitializingBean` 和 `DisposableBean`接口方法
+- 自定义的 `init()` 和 `destroy()` 方法
+-  `@PostConstruct` 和 `@PreDestroy`注解
+
+如果在一个bean上同时使用了以上三种方式，那么按照如下顺序调用：
+
+1. `@PostConstruct` 和 `@PreDestroy`注解
+2.  `InitializingBean` 和 `DisposableBean`接口方法
+3. 自定义的 `init()` 和 `destroy()` 方法
+
+看下源码就会知道，`@PostConstruct` 和 `@PreDestroy`注解的调用是通过`InitDestroyAnnotationBeanPostProcessor.postProcessBeforeInitialization`来实现的，这个方法是在bean所有初始化回调（包括 `InitializingBean` 和自定义初始化方法）之前调用的。而`BeanPostProcessor.postProcessAfterInitialization`则是在所有初始化回调方法之后调用的。
+
+#### 容器启动和关闭回调
+
+当`ApplicationContext`启动或关闭时，会调用所有`Lifecycle`接口的实现
+
+```java
+public interface Lifecycle {
+    void start();
+    void stop();
+    boolean isRunning();
+}
+```
+
+实际执行是交给代理来处理的`LifecycleProcessor`，处理器本身也是`Lifecycle`的一个实现，扩展了两个方法，在容器refresh/close时执行
+
+```java
+public interface LifecycleProcessor extends Lifecycle {
+    void onRefresh();
+    void onClose();
+}
+```
+
+这里的实现挺有借鉴意义的，容器在strart/refresh/stop/close时会去查找`LifecycleProcessor`（没有则会初始化一个），随后调用`LifecycleProcessor`
+
+- 在容器start/refresh/stop/close时需要调用所有`Lifecycle`接口的实现
+- Spring通过`LifecycleProcessor`代理，在`LifecycleProcessor.start/stop/onRefresh/onClose`方法内统一去查找并调用所有`Lifecycle`接口的实现
+- 而代理本身也是`Lifecycle`接口的实现，在查找时会排除掉自己
+
+
+
+
 
 
 

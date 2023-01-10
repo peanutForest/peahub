@@ -1090,6 +1090,31 @@ public interface LifecycleProcessor extends Lifecycle {
 
 
 
+再来讨论下启动和关闭过程中的调用顺序。如果定义了`depends-on`依赖关系，假使A依赖B，那么A在B之后启动，并且在B之前销毁。但是有些情况下，并没有这种显示的依赖关系，只能知道某些类型必须在其他类型之前启动。在这种情况下，可以使用`SmartLifecycle`
+
+```java
+public interface SmartLifecycle extends Lifecycle, Phased {
+    boolean isAutoStartup();
+    void stop(Runnable callback);
+}
+```
+
+`SmartLifecycle`继承自`Lifecycle`和`Phased`
+
+```java
+public interface Phased {
+    int getPhase();
+}
+```
+
+容器启动过程中，当对象实现`SmartLifecycle`时，`getPhase()`返回的值越小则越先开始启动，关闭时则越晚销毁。
+
+对于只实现了`Lifecycle`的对象而言，它的`getPhase()`则默认是0。
+
+再看`stop(Runnable callback)`方法，callback里执行的方法原本是`LifecycleProcessor`在执行完`Lifecycle.stop()`方法之后执行的内容，现在交由`SmartLifecycle.stop(Runnable callback)`方法在其内部去异步回调执行。`stop(Runnable callback)`一般在内部调用自身的`stop()`方法之后就必须调用`callback.run()`方法。
+
+最后再看`isAutoStartup()`方法。`LifecycleProcessor`内定义了两个方法，一个`onClose`方法，在容器`close`时被调用，而另一个方法`onRefresh`方法则是在容器刷新时调用，这个时候`LifecycleProcessor`会检查`SmartLifecycle.isAutoStartup()`是否返回true，为true时则会调用该`SmartLifecycle`的`start`方法。
+
 
 
 
